@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>即描きバトル v0.4</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;background:#10141d;color:#fff}
+  body{touch-action:none}
+  #app{width:100%;height:100%;display:flex;justify-content:center;background:linear-gradient(#111827,#080b11)}
+  .screen{width:min(100vw,520px);height:100%;position:relative;overflow:hidden}
+  .title{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center}
+  h1{font-size:48px;margin:0 0 10px;font-weight:900;letter-spacing:-3px}
+  .sub{opacity:.7;margin-bottom:26px}
+  button{border:0;border-radius:18px;font-size:20px;font-weight:800;padding:16px 28px;color:#10141d;background:#fff}
+  .start{width:min(82%,340px);box-shadow:0 10px 30px #0006}
+  .rules{margin-top:24px;width:min(88%,390px);padding:18px 20px;border:1px solid #ffffff22;background:#ffffff0b;border-radius:18px;text-align:left;line-height:1.75;color:#d9dee9;font-size:14px}
+  .rules strong{color:#fff;font-size:15px}
+  #game{display:none;height:100%;position:relative}
+  #top{position:absolute;left:12px;right:12px;top:10px;z-index:5;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
+  .pill{background:#0009;border:1px solid #ffffff22;border-radius:999px;padding:8px 12px;font-weight:800;font-size:14px}
+  #count{font-size:24px}
+  #drawUI{display:none;position:absolute;z-index:10;left:12px;right:12px;bottom:12px;background:#000b;border:1px solid #ffffff22;border-radius:20px;padding:12px}
+  .row{display:flex;align-items:center;gap:10px}
+  .row label{font-size:13px;white-space:nowrap;font-weight:700}
+  input[type=range]{width:100%;accent-color:#fff}
+  .smallbtn{font-size:14px;padding:9px 13px;border-radius:12px;background:#ffffff18;color:#fff;border:1px solid #ffffff22}
+  canvas{width:100%;height:100%;display:block;background:radial-gradient(circle at 50% 35%,#1d2939 0,#101720 45%,#080b10 100%)}
+  #message{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;text-align:center;background:#0008}
+  .panel{width:82%;background:#121925;border:1px solid #ffffff22;border-radius:24px;padding:28px;box-shadow:0 20px 60px #000b}
+  .panel h2{font-size:34px;margin:0 0 8px}
+  .panel p{opacity:.8;line-height:1.6}
+  .again{margin-top:12px;width:100%}
+  .hint{font-size:12px;opacity:.65;margin-top:7px;text-align:center}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="screen">
+    <section id="title" class="title">
+      <div style="font-size:13px;opacity:.5;margin-bottom:8px">DRAW & BATTLE</div>
+      <h1>即描きバトル</h1>
+      <div class="sub">10秒で描いた剣が、そのまま武器になる。</div>
+      <button id="startBtn" class="start">START</button>
+      <div class="rules">
+        <strong>RULE</strong><br>
+        ① お題「剣」が出たら白いエリア内に10秒以内で描く<br>
+        ② 描いた形は体より少し小さいサイズに収まる<br>
+        ③ 描いた剣をキャラが実際に持ってバトル！<br>
+        ④ バトルは物理演算。ぶつけ方や勢いで勝負が変わる<br>
+        ⑤ バトルは30秒。決着がつかなければ引き分け
+      </div>
+    </section>
+
+    <section id="game">
+      <canvas id="canvas"></canvas>
+      <div id="top">
+        <div id="topic" class="pill">お題：剣</div>
+        <div id="count" class="pill">10</div>
+        <div id="stage" class="pill" style="position:absolute;top:46px;left:50%;transform:translateX(-50%);display:none"></div>
+      </div>
+
+      <div id="drawUI">
+        <div class="row">
+          <label>太さ <span id="widthVal">8</span></label>
+          <input id="width" type="range" min="2" max="24" value="8">
+          <button id="clearBtn" class="smallbtn">消す</button>
+        </div>
+        <div class="hint">指で剣を描いてください。太さは途中でも変更できます。</div>
+      </div>
+
+      <div id="message">
+        <div class="panel">
+          <h2 id="result">YOU WIN!</h2>
+          <p id="resultText"></p>
+          <button id="again" class="again">もう一度</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- Matter.js: ブラウザ上で動く物理演算エンジン -->
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+<script>
+const {Engine, Render, Runner, Bodies, Body, Composite, Constraint, Events, Vector} = Matter;
+
+const title = document.getElementById('title');
+const game = document.getElementById('game');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const countEl = document.getElementById('count');
+const drawUI = document.getElementById('drawUI');
+const widthSlider = document.getElementById('width');
+const widthVal = document.getElementById('widthVal');
+const clearBtn = document.getElementById('clearBtn');
+const message = document.getElementById('message');
+const result = document.getElementById('result');
+const resultText = document.getElementById('resultText');
+const again = document.getElementById('again');
+
+let W=0,H=0, dpr=1;
+let phase='title';
+let strokes=[];
+let currentStroke=null;
+let drawing=false;
+let countdownTimer=null;
+let drawTimer=null;
+let engine=null, runner=null;
+let player=null, enemy=null, playerSword=null, enemySword=null;
+let playerJoint=null, enemyJoint=null;
+let battleStart=0;
+let approachStart=0;
+const APPROACH_DURATION=2.8;
+let battleReady=false;
+let damageP=0, damageE=0;
+let playerSwordVisual=[], enemySwordVisual=[];
+let swordLengthP=88, swordThicknessP=8;
+let drawArea=null;
+let currentStage=null;
+let stageBodies=[];
+const MAX_SWORD_LENGTH=88;
+
+function getDrawArea(){
+  const size=Math.min(280,Math.max(220,W-40));
+  return {x:(W-size)/2,y:105,w:size,h:size};
+}
+
+function clampPointToDrawArea(x,y){
+  const a=drawArea||getDrawArea();
+  return {x:Math.max(a.x,Math.min(a.x+a.w,x)),y:Math.max(a.y,Math.min(a.y+a.h,y))};
+}
+
+function resize(){
+  dpr=Math.min(devicePixelRatio||1,2);
+  W=game.clientWidth; H=game.clientHeight;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize',resize);
+
+function resetCanvas(){
+  strokes=[]; currentStroke=null; drawing=false;
+  drawArea=getDrawArea();
+  ctx.clearRect(0,0,W,H);
+}
+
+function drawPad(){
+  if(!drawArea) return;
+  const a=drawArea;
+  ctx.save();
+  ctx.fillStyle='#fff';
+  ctx.shadowColor='#0008';
+  ctx.shadowBlur=18;
+  ctx.fillRect(a.x,a.y,a.w,a.h);
+  ctx.shadowBlur=0;
+  ctx.strokeStyle='#d5dbe5';ctx.lineWidth=2;ctx.strokeRect(a.x,a.y,a.w,a.h);
+  ctx.fillStyle='#8b95a5';ctx.font='700 13px sans-serif';ctx.textAlign='center';
+  ctx.fillText('ここに剣を描いて！',W/2,a.y+22);
+  ctx.restore();
+}
+
+function drawLine(points,width=8){
+  if(!points || points.length<2) return;
+  ctx.save();
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle=phase==='draw'?'#111827':'#dfe8ff';
+  ctx.lineWidth=width;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x,points[0].y);
+  for(let i=1;i<points.length;i++) ctx.lineTo(points[i].x,points[i].y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAll(){
+  ctx.clearRect(0,0,W,H);
+  if(phase==='draw') drawPad();
+  for(const s of strokes) drawLine(s.points,s.width);
+  if(currentStroke) drawLine(currentStroke.points,currentStroke.width);
+}
+
+canvas.addEventListener('pointerdown', e=>{
+  if(phase!=='draw') return;
+  e.preventDefault();
+  canvas.setPointerCapture?.(e.pointerId);
+  drawing=true;
+  const p=clampPointToDrawArea(e.offsetX,e.offsetY);
+  currentStroke={points:[p],width:+widthSlider.value};
+  drawAll();
+},{passive:false});
+
+canvas.addEventListener('pointermove', e=>{
+  if(!drawing || phase!=='draw' || !currentStroke) return;
+  e.preventDefault();
+  const p=clampPointToDrawArea(e.offsetX,e.offsetY);
+  const last=currentStroke.points[currentStroke.points.length-1];
+  if(Math.hypot(p.x-last.x,p.y-last.y)>2){
+    currentStroke.points.push(p);
+    drawAll();
+  }
+},{passive:false});
+
+function endDraw(){
+  if(!drawing) return;
+  drawing=false;
+  if(currentStroke && currentStroke.points.length>1) strokes.push(currentStroke);
+  currentStroke=null;
+  drawAll();
+}
+canvas.addEventListener('pointerup',endDraw);
+canvas.addEventListener('pointercancel',endDraw);
+canvas.addEventListener('pointerleave',()=>{ /* capture keeps drawing on iPhone */ });
+
+widthSlider.addEventListener('input',()=>{
+  widthVal.textContent=widthSlider.value;
+  if(currentStroke) currentStroke.width=+widthSlider.value;
+  drawAll();
+});
+clearBtn.addEventListener('click',()=>{ if(phase==='draw'){strokes=[];currentStroke=null;drawAll();}});
+
+function start(){
+  title.style.display='none';
+  game.style.display='block';
+  resize();
+  resetCanvas();
+  message.style.display='none';
+  drawUI.style.display='none';
+  document.getElementById('stage').style.display='none';
+  phase='countdown';
+  let n=3;
+  countEl.textContent=n;
+  clearInterval(countdownTimer);
+  countdownTimer=setInterval(()=>{
+    n--;
+    if(n<=0){
+      clearInterval(countdownTimer);
+      beginDraw();
+    }else countEl.textContent=n;
+  },700);
+}
+
+function beginDraw(){
+  phase='draw';
+  resetCanvas();
+  drawUI.style.display='block';
+  widthSlider.value=8; widthVal.textContent='8';
+  drawArea=getDrawArea();
+  drawAll();
+  let t=10;
+  countEl.textContent=t;
+  clearInterval(drawTimer);
+  drawTimer=setInterval(()=>{
+    t--;
+    countEl.textContent=t;
+    if(t<=0){
+      clearInterval(drawTimer);
+      finishDrawing();
+    }
+  },1000);
+}
+
+function makeSwordData(){
+  let all=[];
+  for(const s of strokes) for(const p of s.points) all.push(p);
+  if(all.length<2){
+    all=[{x:drawArea.x+70,y:drawArea.y+drawArea.h/2},{x:drawArea.x+150,y:drawArea.y+drawArea.h/2}];
+  }
+  let minX=Math.min(...all.map(p=>p.x)), maxX=Math.max(...all.map(p=>p.x));
+  let minY=Math.min(...all.map(p=>p.y)), maxY=Math.max(...all.map(p=>p.y));
+  let cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+  let rawLen=Math.hypot(maxX-minX,maxY-minY);
+  let len=Math.max(48,Math.min(MAX_SWORD_LENGTH,rawLen||48));
+  const scale=Math.min(1,MAX_SWORD_LENGTH/Math.max(1,rawLen));
+  let angle=Math.atan2(maxY-minY,maxX-minX);
+  let thick=Math.max(4,Math.min(12,strokes.length ? Math.max(...strokes.map(s=>s.width)) : 8));
+  let points=[];
+  for(const s of strokes){
+    for(const p of s.points){
+      points.push({x:(p.x-cx)*scale,y:(p.y-cy)*scale});
+    }
+  }
+  if(points.length<2) points=[{x:-len/2,y:0},{x:len/2,y:0}];
+  // 物理ボディの長さと描画線の外形を一致させるため、最終的に最大88pxへ正規化
+  const span=Math.hypot(
+    Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x)),
+    Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y))
+  );
+  if(span>0){
+    const s= Math.min(1,MAX_SWORD_LENGTH/span);
+    points=points.map(p=>({x:p.x*s,y:p.y*s}));
+    len=Math.min(MAX_SWORD_LENGTH,Math.max(48,span*s));
+  }
+  return {points,len,thick,angle};
+}
+
+function finishDrawing(){
+  phase='battle';
+  drawUI.style.display='none';
+  const data=makeSwordData();
+  swordLengthP=data.len;
+  swordThicknessP=data.thick;
+  playerSwordVisual=data.points;
+  // COMはランダムな剣
+  enemySwordVisual=[{x:-55,y:0},{x:65,y:0}];
+  startBattle(data);
+}
+
+const STAGES=[
+  {name:'PLAIN',color:'#1b2633',build:(b)=>[b.rectangle(W/2,H-28,W,56,{isStatic:true,restitution:.25})]},
+  {name:'CENTER',color:'#1b2633',build:(b)=>[
+    b.rectangle(W/2,H-28,W,56,{isStatic:true,restitution:.25}),
+    b.rectangle(W/2,H-135,105,24,{isStatic:true,restitution:.15,friction:.8})
+  ]},
+  {name:'TWIN',color:'#1b2633',build:(b)=>[
+    b.rectangle(W/2,H-28,W,56,{isStatic:true,restitution:.25}),
+    b.rectangle(W*.27,H-125,92,22,{isStatic:true,restitution:.15,friction:.8}),
+    b.rectangle(W*.73,H-125,92,22,{isStatic:true,restitution:.15,friction:.8})
+  ]},
+  {name:'WALL',color:'#1b2633',build:(b)=>[
+    b.rectangle(W/2,H-28,W,56,{isStatic:true,restitution:.25}),
+    b.rectangle(W/2,H-100,24,110,{isStatic:true,restitution:.2,friction:.8})
+  ]},
+  {name:'STAIRS',color:'#1b2633',build:(b)=>[
+    b.rectangle(W/2,H-28,W,56,{isStatic:true,restitution:.25}),
+    b.rectangle(W*.30,H-90,90,20,{isStatic:true,restitution:.15}),
+    b.rectangle(W*.70,H-150,90,20,{isStatic:true,restitution:.15})
+  ]}
+];
+
+function chooseStage(){
+  currentStage=STAGES[Math.floor(Math.random()*STAGES.length)];
+  stageBodies=currentStage.build(Bodies);
+  return stageBodies;
+}
+
+function startBattle(data){
+  engine=Engine.create();
+  engine.gravity.y=0.75;
+  engine.gravity.x=0;
+  engine.positionIterations=8;
+  engine.velocityIterations=8;
+
+  stageBodies=chooseStage();
+  const leftWall=Bodies.rectangle(-20,H/2,40,H,{isStatic:true});
+  const rightWall=Bodies.rectangle(W+20,H/2,40,H,{isStatic:true});
+  const stageEl=document.getElementById('stage');
+  stageEl.textContent='STAGE: '+currentStage.name;
+  stageEl.style.display='block';
+
+  const groundTop=H-56;
+  const fighterH=60;
+  const startY=groundTop-fighterH/2;
+  player=Bodies.rectangle(W*.16,startY,34,fighterH,{
+    restitution:.25,friction:.7,frictionAir:.015,density:.002
+  });
+    enemy=Bodies.rectangle(W*.84,startY,34,fighterH,{
+    restitution:.25,friction:.7,frictionAir:.015,density:.002
+  });
+
+  // 剣は独立した物理ボディ。手元の制約でキャラに「持たせる」
+  playerSword=Bodies.rectangle(W*.16+data.len*.42,startY-8,data.len,Math.max(5,Math.min(9,data.thick)),{
+    restitution:.35,friction:.55,frictionAir:.01,density:.0012
+  });
+  enemySword=Bodies.rectangle(W*.84-30,startY-8,60,7,{
+    restitution:.35,friction:.55,frictionAir:.01,density:.0012
+  });
+
+  Body.setAngle(playerSword,data.angle);
+  Body.setAngle(enemySword,Math.PI-data.angle*.2);
+
+  const ph={x:-20,y:0}; // 手の位置（剣の柄側）
+  playerJoint=Constraint.create({
+    bodyA:player,pointA:{x:20,y:-24},
+    bodyB:playerSword,pointB:{x:-data.len/2+10,y:0},
+    stiffness:.92,damping:.18,length:0
+  });
+  enemyJoint=Constraint.create({
+    bodyA:enemy,pointA:{x:-20,y:-24},
+    bodyB:enemySword,pointB:{x:34,y:0},
+    stiffness:.92,damping:.18,length:0
+  });
+
+  Composite.add(engine.world,[...stageBodies,leftWall,rightWall,player,enemy,playerSword,enemySword,playerJoint,enemyJoint]);
+
+  damageP=0;damageE=0;
+  battleReady=false;
+  approachStart=performance.now();
+  battleStart=0;
+  runner=Runner.create();
+  Runner.run(runner,engine);
+
+  Events.on(engine,'collisionStart',ev=>{
+    for(const pair of ev.pairs){
+      const a=pair.bodyA,b=pair.bodyB;
+      if((a===playerSword&&b===enemy)||(b===playerSword&&a===enemy)){
+        const speed=Vector.magnitude(playerSword.velocity);
+        damageE+=Math.min(34,Math.max(4,speed*2.3+data.thick*.55));
+      }
+      if((a===enemySword&&b===player)||(b===enemySword&&a===player)){
+        const speed=Vector.magnitude(enemySword.velocity);
+        damageP+=Math.min(34,Math.max(4,speed*2.0+5));
+      }
+    }
+  });
+  requestAnimationFrame(battleLoop);
+}
+
+function battleLoop(now){
+  if(phase!=='battle') return;
+
+  const approachElapsed=(now-approachStart)/1000;
+  if(!battleReady){
+    // 開始直後は左右の端から、ゆっくり中央へ接近
+    if(player && enemy){
+      Body.applyForce(player,player.position,{x:0.00048,y:0});
+      Body.applyForce(enemy,enemy.position,{x:-0.00048,y:0});
+      Body.setAngularVelocity(player,0);
+      Body.setAngularVelocity(enemy,0);
+      Body.setAngularVelocity(playerSword,0);
+      Body.setAngularVelocity(enemySword,0);
+    }
+    countEl.textContent='FIGHT!';
+    if(approachElapsed>=APPROACH_DURATION){
+      battleReady=true;
+      battleStart=now;
+    }
+    renderBattle();
+    requestAnimationFrame(battleLoop);
+    return;
+  }
+
+  renderBattle();
+  const elapsed=(now-battleStart)/1000;
+  // 接近後に戦闘開始。COMがプレイヤーへ寄って剣を振る
+  if(enemy && player){
+    const dir=player.position.x>enemy.position.x?1:-1;
+    Body.applyForce(enemy,enemy.position,{x:dir*0.00055,y:0});
+    Body.setAngularVelocity(enemy,Math.sin(elapsed*4)*0.025);
+    Body.setAngularVelocity(enemySword,Math.sin(elapsed*5.5)*0.08);
+  }
+  if(player && playerSword){
+    const dir=enemy.position.x>player.position.x?1:-1;
+    Body.applyForce(player,player.position,{x:dir*0.00022,y:0});
+  }
+
+  const timeLeft=Math.max(0,30-Math.floor(elapsed));
+  countEl.textContent=timeLeft+'s';
+  if(damageE>=100 || damageP>=100 || elapsed>=30){
+    const win=damageE>damageP;
+    endBattle(damageE>=100||damageP>=100 ? win : null);
+    return;
+  }
+  requestAnimationFrame(battleLoop);
+}
+
+function drawStick(body,headOffset=0){
+  const x=body.position.x,y=body.position.y,a=body.angle;
+  const s=0.68;
+  ctx.save();
+  ctx.translate(x,y);ctx.rotate(a);ctx.scale(s,s);
+  ctx.lineCap='round';ctx.lineWidth=5;ctx.strokeStyle='#fff';ctx.fillStyle='#fff';
+  // 小さめの棒人間
+  ctx.beginPath();ctx.arc(0,-34,11,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-23);ctx.lineTo(0,13);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-15);ctx.lineTo(17,-2);ctx.moveTo(0,-15);ctx.lineTo(-17,-2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,13);ctx.lineTo(-14,34);ctx.moveTo(0,13);ctx.lineTo(14,34);ctx.stroke();
+  ctx.restore();
+}
+
+function drawSwordVisual(body,points,thick,flip=false){
+  if(!body) return;
+  const x=body.position.x,y=body.position.y,a=body.angle;
+  ctx.save();ctx.translate(x,y);ctx.rotate(a);
+  // 物理剣ボディの位置に、実際に描いた線を重ねる
+  let xs=points.map(p=>p.x), ys=points.map(p=>p.y);
+  let minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  let span=Math.max(1,Math.hypot(maxX-minX,maxY-minY));
+  let scale=Math.max(0.35,Math.min(1.35,(body.bounds.max.x-body.bounds.min.x)/span));
+  ctx.scale(scale,scale);
+  ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#dfe8ff';ctx.lineWidth=thick;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x,points[0].y);
+  for(let i=1;i<points.length;i++)ctx.lineTo(points[i].x,points[i].y);
+  ctx.stroke();
+  // 柄
+  ctx.strokeStyle='#8c6b4f';ctx.lineWidth=Math.max(5,thick*.8);
+  ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(-28,0);ctx.stroke();
+  ctx.restore();
+}
+
+function renderBattle(){
+  ctx.clearRect(0,0,W,H);
+  // ステージ
+  ctx.fillStyle='#1b2633';
+  if(stageBodies.length){
+    for(const b of stageBodies){
+      const v=b.vertices;
+      ctx.beginPath();ctx.moveTo(v[0].x,v[0].y);
+      for(let i=1;i<v.length;i++)ctx.lineTo(v[i].x,v[i].y);
+      ctx.closePath();ctx.fill();
+      ctx.strokeStyle='#314154';ctx.lineWidth=2;ctx.stroke();
+    }
+  }
+
+  drawStick(player);
+  drawStick(enemy);
+  drawSwordVisual(playerSword,playerSwordVisual,swordThicknessP);
+  drawSwordVisual(enemySword,enemySwordVisual,10);
+
+  ctx.fillStyle='#fff';
+  ctx.font='bold 13px sans-serif';
+  ctx.fillText('YOU',Math.max(8,player.position.x-20),Math.max(25,player.position.y-65));
+  ctx.fillText('COM',Math.min(W-40,enemy.position.x-20),Math.max(25,enemy.position.y-65));
+
+  // HP
+  const barW=Math.min(145,W*.32), barH=10, y=54;
+  ctx.fillStyle='#0008';ctx.fillRect(12,y,barW,barH);ctx.fillRect(W-12-barW,y,barW,barH);
+  ctx.fillStyle='#fff';ctx.fillRect(12,y,barW*Math.max(0,1-damageP/100),barH);
+  ctx.fillRect(W-12-barW,y,barW*Math.max(0,1-damageE/100),barH);
+  ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.fillText('YOU',12,y-5);ctx.fillText('COM',W-42,y-5);
+}
+
+function endBattle(win){
+  phase='result';
+  if(runner) Runner.stop(runner);
+  document.getElementById('stage').style.display='none';
+  if(win===null){
+    result.textContent='DRAW';
+    resultText.textContent=`30秒で決着がつかなかった！ ダメージ ${Math.round(damageE)} / ${Math.round(damageP)}`;
+  }else{
+    result.textContent=win?'YOU WIN!':'YOU LOSE...';
+    resultText.textContent=`与えたダメージ ${Math.round(damageE)} / 受けたダメージ ${Math.round(damageP)}`;
+  }
+  message.style.display='flex';
+}
+
+startBtn.addEventListener('click',start);
+again.addEventListener('click',start);
+resize();
+</script>
+</body>
+</html>
